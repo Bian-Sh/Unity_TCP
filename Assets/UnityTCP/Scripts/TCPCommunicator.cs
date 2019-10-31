@@ -1,20 +1,25 @@
-﻿using System;
+using System;
 using System.IO;
+using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using UnityEngine;
 
 namespace Kodai100.Tcp
 {
 
     public class TcpCommunicator : IDisposable
     {
-        
-        public string Name { get; }
 
-        public bool IsConnecting {
-            get {
+        public string Name { get { return null==Socket?"Offline":Socket.RemoteEndPoint.ToString(); } }
+      //  public string Name { get; }
+
+        public bool IsConnecting
+        {
+            get
+            {
                 try
                 {
                     if ((TcpClient == null) || !TcpClient.Connected) return false;
@@ -30,27 +35,63 @@ namespace Kodai100.Tcp
         }
 
 
-        private TcpClient TcpClient { get; }
+        private TcpClient TcpClient { get; } 
 
         private Socket Socket => TcpClient?.Client;
 
         private SynchronizationContext mainContext;
         private OnMessageEvent OnMessage;
 
-        private bool running = false;
 
+        private bool running = false;
+        string host; int port;
 
         public TcpCommunicator(TcpClient tcpClient, OnMessageEvent onMessage)
         {
+            Debug.Log(1);
             this.TcpClient = tcpClient ?? throw new ArgumentNullException(nameof(tcpClient));
-            this.Name = $"[{Socket.RemoteEndPoint}]";
+
+         //  this.Name = $"[{Socket.RemoteEndPoint}]";
 
             this.mainContext = SynchronizationContext.Current;
             this.OnMessage = onMessage;
+
         }
 
-        public TcpCommunicator(string host, int port, OnMessageEvent onMessage) : this(new TcpClient(host, port), onMessage)
+        //public TcpCommunicator(string host, int port, OnMessageEvent onMessage) : this(new TcpClient(host, port), onMessage)
+        public TcpCommunicator(string host, int port, OnMessageEvent onMessage) : this(new TcpClient(), onMessage)
         {
+            Debug.Log(2);
+            this.host = host;
+            this.port = port;
+            ProcessIncomingNetworkData();
+        }
+
+        async void ProcessIncomingNetworkData()
+        {
+            byte[] buffer = new byte[1024];
+            await this.TcpClient.ConnectAsync(host, port);
+            Debug.Log($"RemoteEndPoint [{Socket.RemoteEndPoint}]");
+            while (this.TcpClient.Connected)
+            {
+                try
+                {
+                    int count = await TcpClient.GetStream().ReadAsync(buffer, 0, buffer.Length);
+                    ProcessIncomingData(buffer, count);
+                }
+                catch (Exception e)
+                {
+                    Debug.Log(e+ " IsConnecting: " + IsConnecting);
+                    throw;
+                }
+            }
+        }
+
+        private void ProcessIncomingData(byte[] buffer, int count)
+        {
+            Debug.Log("receiving data " + buffer.Length + " : " + count);
+            string str = Encoding.UTF8.GetString(buffer,0,count);
+            mainContext.Post(_ => OnMessage.Invoke(str), null);
         }
 
         public void Dispose()
@@ -58,10 +99,9 @@ namespace Kodai100.Tcp
             if (TcpClient != null)
             {
                 running = false;
-
                 TcpClient.Close();
-                (TcpClient as IDisposable).Dispose();
-                
+                TcpClient.Dispose();
+
             }
         }
 
@@ -88,16 +128,16 @@ namespace Kodai100.Tcp
         {
 
             if (TcpClient == null) return;
-            
+
             running = true;
 
             while (running)
             {
-                await Task.Run(() => Receive());
+                await Task.Run(Receive);
             }
-            
+
         }
-        
+
         public async Task Receive()
         {
             if (!IsConnecting)
@@ -124,6 +164,6 @@ namespace Kodai100.Tcp
                 throw new ApplicationException("Attempt to receive failed.", ex);
             }
         }
-        
+
     }
 }
